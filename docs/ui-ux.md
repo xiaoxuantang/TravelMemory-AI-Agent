@@ -56,10 +56,11 @@ Never use:
 - Game cursor.
 - Leaf bell.
 
-## 4. Product Pages
+## 4. Required Pages
 
-Only define these five MVP pages:
+Only define these required MVP pages:
 
+- **Intro Landing:** Let users understand the product through swipeable intro cards before entering the upload flow.
 - **Home:** Explain "upload travel photo -> generate travel memory poster".
 - **Upload:** Make users comfortable uploading photos.
 - **Generating:** Reduce waiting anxiety.
@@ -73,6 +74,52 @@ Do not define:
 - Settings page.
 - Template marketplace.
 - Growth analytics page.
+
+## 4.1 Intro Landing Page
+
+The Intro Landing page is shown before users formally use the product.
+
+Purpose:
+
+Let users understand the product through swipeable intro cards before entering the upload flow.
+
+Page route:
+
+```txt
+/intro
+```
+
+Intro Landing structure:
+
+Slide 1:
+
+- Title: 上传旅行照片
+- Text: 选择一张你喜欢的旅行照片，AI 会读取照片里的旅行情绪。
+
+Slide 2:
+
+- Title: 生成旅行明信片
+- Text: 自动生成标题、文案和一张适合分享的旅行记忆海报。
+
+Slide 3:
+
+- Title: 下载并分享
+- Text: 保存海报，分享给朋友，也可以通过二维码带来新的旅行记忆。
+
+Final CTA:
+
+- 开始生成我的旅行记忆
+
+Intro Landing rules:
+
+- Mobile-first.
+- Use horizontal swipe cards.
+- Provide dot indicator.
+- Provide Skip button.
+- Final CTA links to `/upload`.
+- Do not require login before viewing intro.
+- Do not use heavy carousel library.
+- Use simple CSS scroll-snap or small custom state.
 
 ## 5. Reusable Component List
 
@@ -339,6 +386,16 @@ Copy examples:
 - 默认使用第一张照片作为主图
 - 你的照片只用于生成本次旅行记忆
 
+PhotoUploader hard rules:
+
+- Do not implement local binary storage on the server.
+- Browser uploads images directly to Cloudinary in future upload implementation.
+- Backend only signs upload requests and stores metadata.
+- Show a preview area before generation.
+- Default to the first photo as the main poster image.
+- Keep upload copy reassuring and non-technical.
+- Do not show raw provider errors to users.
+
 ## 13. Generating UX Copy
 
 Use friendly step copy:
@@ -454,7 +511,8 @@ Documentation:
 - [ ] Visual direction is defined.
 - [ ] Allowed inspiration is defined.
 - [ ] Forbidden references are defined.
-- [ ] Five MVP pages are defined.
+- [ ] Required pages are defined.
+- [ ] Intro Landing is documented.
 - [ ] Reusable component list is defined.
 - [ ] `tm-*` Tailwind theme token contract is defined.
 - [ ] CSS variable contract is defined.
@@ -463,6 +521,7 @@ Documentation:
 - [ ] PosterPreview 9:16 contract is defined.
 - [ ] Button and Card rules are defined.
 - [ ] Upload UX copy is defined.
+- [ ] PhotoUploader hard rules are defined.
 - [ ] Generating UX copy is defined.
 - [ ] Result UX order is defined.
 - [ ] Share Landing UX order is defined.

@@ -23,7 +23,8 @@ Do not import `animal-island-ui`.
 Define only:
 
 - Visual direction.
-- Five MVP pages.
+- Required MVP pages.
+- Intro Landing page.
 - First-batch components.
 - `tm-*` theme tokens.
 - CSS variable contract.
@@ -32,6 +33,7 @@ Define only:
 - PosterPreview ratio rule.
 - Button and Card rules.
 - Upload UX copy.
+- PhotoUploader UX rules.
 - Generating UX copy.
 - Result UX order.
 - Share Landing UX order.
@@ -73,8 +75,9 @@ Forbidden references:
 
 ## MVP Pages
 
-Only define these five MVP pages:
+Only define these required MVP pages:
 
+- **Intro Landing:** Let users understand the product through swipeable intro cards before entering the upload flow.
 - **Home:** Explain value and drive upload.
 - **Upload:** Collect photo, city, date, and mood.
 - **Generating:** Reduce waiting anxiety.
@@ -89,6 +92,52 @@ Do not define:
 - Template marketplace.
 - Admin.
 - Analytics.
+
+## Intro Landing
+
+The Intro Landing page is shown before users formally use the product.
+
+Purpose:
+
+Let users understand the product through swipeable intro cards before entering the upload flow.
+
+Page route:
+
+```txt
+/intro
+```
+
+Intro Landing structure:
+
+Slide 1:
+
+- Title: 上传旅行照片
+- Text: 选择一张你喜欢的旅行照片，AI 会读取照片里的旅行情绪。
+
+Slide 2:
+
+- Title: 生成旅行明信片
+- Text: 自动生成标题、文案和一张适合分享的旅行记忆海报。
+
+Slide 3:
+
+- Title: 下载并分享
+- Text: 保存海报，分享给朋友，也可以通过二维码带来新的旅行记忆。
+
+Final CTA:
+
+- 开始生成我的旅行记忆
+
+Intro Landing rules:
+
+- Mobile-first.
+- Use horizontal swipe cards.
+- Provide dot indicator.
+- Provide Skip button.
+- Final CTA links to `/upload`.
+- Do not require login before viewing intro.
+- Do not use heavy carousel library.
+- Use simple CSS scroll-snap or small custom state.
 
 ## Component List
 
@@ -265,6 +314,18 @@ Copy examples:
 - 默认使用第一张照片作为主图
 - 你的照片只用于生成本次旅行记忆
 
+## Required PhotoUploader UX Rules
+
+PhotoUploader hard rules:
+
+- Do not implement local binary storage on the server.
+- Browser uploads images directly to Cloudinary in future upload implementation.
+- Backend only signs upload requests and stores metadata.
+- Show a preview area before generation.
+- Default to the first photo as the main poster image.
+- Keep upload copy reassuring and non-technical.
+- Do not show raw provider errors to users.
+
 ## Required Generating UX Copy
 
 Use friendly step copy:
@@ -386,7 +447,8 @@ Documentation:
 - [ ] Visual direction is defined.
 - [ ] Allowed inspiration is defined.
 - [ ] Forbidden references are defined.
-- [ ] Five MVP pages are defined.
+- [ ] Required pages are defined.
+- [ ] Intro Landing is documented.
 - [ ] Component list is defined.
 - [ ] `tm-*` Tailwind token contract is defined.
 - [ ] CSS variable contract is defined.
@@ -395,6 +457,7 @@ Documentation:
 - [ ] Cross-platform font stack is defined.
 - [ ] Legal / originality boundary is defined.
 - [ ] Upload UX copy is defined.
+- [ ] PhotoUploader hard rules are defined.
 - [ ] Generating UX copy is defined.
 - [ ] Result UX order is defined.
 - [ ] Share Landing UX order is defined.
