@@ -1,3 +1,5 @@
+import { PhotoUploader } from "../components/ui/PhotoUploader";
+
 const moods = ["松弛", "浪漫", "治愈", "冒险"];
 
 export default function UploadPage() {
@@ -12,27 +14,7 @@ export default function UploadPage() {
           </p>
         </header>
 
-        <section className="tm-panel p-4">
-          <label
-            htmlFor="photo"
-            className="tm-upload-zone"
-          >
-            <span className="text-base font-semibold text-tm-text">
-              选择旅行照片
-            </span>
-            <span className="mt-2 text-sm leading-6 text-tm-muted">
-              支持手机相册中的旅行照片，稍后会在这里预览主图。
-            </span>
-          </label>
-          <input id="photo" name="photo" type="file" accept="image/*" className="sr-only" />
-        </section>
-
-        <section className="tm-card p-4">
-          <div className="aspect-[9/16] w-full rounded-tm-card border border-tm-border bg-tm-surface-soft" />
-          <p className="mt-3 text-center text-sm text-tm-muted">
-            照片预览区域
-          </p>
-        </section>
+        <PhotoUploader />
 
         <section className="tm-card space-y-4 p-4">
           <label className="block space-y-2">

@@ -10,6 +10,8 @@ import {
   index
 } from "drizzle-orm/pg-core";
 
+import type { UploadAssetMetadata } from "../../types/upload";
+
 export const users = pgTable(
   "users",
   {
@@ -76,43 +78,33 @@ export const memories = pgTable(
   })
 );
 
-export const memoryAssets = pgTable(
-  "memory_assets",
+export const uploadAssets = pgTable(
+  "upload_assets",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-
-    memoryId: bigint("memory_id", { mode: "number" }).references(
-      () => memories.id,
-      { onDelete: "cascade" }
-    ),
-
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-
+    userId: text("user_id").notNull(),
+    imageHash: text("image_hash").notNull(),
     publicId: text("public_id").notNull(),
     secureUrl: text("secure_url").notNull(),
-
-    width: integer("width"),
-    height: integer("height"),
-    bytes: integer("bytes"),
-
-    role: text("role").notNull().default("input"),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    bytes: integer("bytes").notNull(),
+    etag: text("etag"),
+    format: text("format"),
+    metadata: jsonb("metadata").$type<UploadAssetMetadata>().notNull(),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
-      .defaultNow(),
-
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
       .defaultNow()
-      .$onUpdate(() => new Date())
   },
   (table) => ({
-    memoryIdx: index("memory_assets_memory_idx").on(table.memoryId),
-    userIdx: index("memory_assets_user_idx").on(table.userId),
-    publicIdIdx: index("memory_assets_public_id_idx").on(table.publicId),
-    createdAtIdx: index("memory_assets_created_at_idx").on(table.createdAt)
+    userImageHashIdx: uniqueIndex("upload_assets_user_image_hash_idx").on(
+      table.userId,
+      table.imageHash
+    ),
+    userIdx: index("upload_assets_user_idx").on(table.userId),
+    imageHashIdx: index("upload_assets_image_hash_idx").on(table.imageHash),
+    createdAtIdx: index("upload_assets_created_at_idx").on(table.createdAt)
   })
 );
 

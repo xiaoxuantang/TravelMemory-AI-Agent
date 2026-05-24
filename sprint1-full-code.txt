@@ -1,0 +1,1391 @@
+import { IntroCarousel } from "../components/ui/IntroCarousel";
+
+export default function IntroPage() {
+  return <IntroCarousel />;
+}
+"use client";
+
+import Link from "next/link";
+import { useRef, useState } from "react";
+
+const slides = [
+  {
+    title: "上传旅行照片",
+    text: "选择一张你喜欢的旅行照片，AI 会读取照片里的旅行情绪。"
+  },
+  {
+    title: "生成旅行明信片",
+    text: "自动生成标题、文案和一张适合分享的旅行记忆海报。"
+  },
+  {
+    title: "下载并分享",
+    text: "保存海报，分享给朋友，也可以通过二维码带来新的旅行记忆。"
+  }
+];
+
+export function IntroCarousel() {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+
+  function handleScroll() {
+    const scroller = scrollerRef.current;
+
+    if (!scroller) {
+      return;
+    }
+
+    const nextIndex = Math.round(scroller.scrollLeft / scroller.clientWidth);
+    setActiveIndex(Math.min(slides.length - 1, Math.max(0, nextIndex)));
+  }
+
+  return (
+    <div className="tm-page min-h-screen justify-between">
+      <div className="flex justify-end">
+        <Link href="/upload" className="text-sm font-semibold text-tm-muted">
+          跳过
+        </Link>
+      </div>
+
+      <div
+        ref={scrollerRef}
+        onScroll={handleScroll}
+        className="flex snap-x snap-mandatory overflow-x-auto scroll-smooth"
+      >
+        {slides.map((slide) => (
+          <section
+            key={slide.title}
+            className="min-w-full snap-center px-1"
+          >
+            <div className="tm-panel flex min-h-96 flex-col justify-center p-6 text-center">
+              <p className="mb-4 text-sm font-medium text-tm-accent">
+                TravelMemory
+              </p>
+              <h1 className="text-3xl font-bold text-tm-text">{slide.title}</h1>
+              <p className="mt-4 text-base leading-7 text-tm-muted">
+                {slide.text}
+              </p>
+            </div>
+          </section>
+        ))}
+      </div>
+
+      <div className="space-y-5">
+        <div className="flex justify-center gap-2">
+          {slides.map((slide, index) => (
+            <span
+              key={slide.title}
+              className={
+                index === activeIndex
+                  ? "h-2 w-6 rounded-tm-pill bg-tm-primary"
+                  : "h-2 w-2 rounded-tm-pill bg-tm-border"
+              }
+            />
+          ))}
+        </div>
+
+        <Link href="/upload" className="tm-button-primary flex items-center justify-center">
+          开始生成我的旅行记忆
+        </Link>
+      </div>
+    </div>
+  );
+}
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+import type {
+  CloudinaryUploadResult,
+  NewUploadSignResponse,
+  UploadSignResponse
+} from "../../types/upload";
+import { calculateImageHash } from "../../lib/utils/image-hash";
+import { validateImageFilePolicy } from "../../lib/utils/file-policy";
+import { UploadProgress } from "./UploadProgress";
+
+type PhotoUploaderProps = {
+  userId?: string;
+};
+
+type UploadState =
+  | "idle"
+  | "preview"
+  | "hashing"
+  | "signing"
+  | "uploading"
+  | "saving"
+  | "uploaded"
+  | "unavailable"
+  | "failed";
+
+function isNewUploadResponse(response: UploadSignResponse): response is NewUploadSignResponse {
+  return response.reuse === false;
+}
+
+function normalizeCloudinaryResult(value: Record<string, unknown>): CloudinaryUploadResult {
+  return {
+    publicId: String(value.public_id ?? ""),
+    secureUrl: String(value.secure_url ?? ""),
+    width: Number(value.width ?? 0),
+    height: Number(value.height ?? 0),
+    bytes: Number(value.bytes ?? 0),
+    etag: typeof value.etag === "string" ? value.etag : undefined,
+    format: typeof value.format === "string" ? value.format : undefined,
+    colors: value.colors
+  };
+}
+
+async function requestUploadSignature(
+  userId: string,
+  file: File,
+  imageHash: string
+): Promise<UploadSignResponse> {
+  const response = await fetch("/api/upload-sign", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      userId,
+      imageHash,
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type
+    })
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? "上传服务暂时不可用，请稍后再试。");
+  }
+
+  return payload as UploadSignResponse;
+}
+
+function uploadToCloudinary(
+  file: File,
+  signResponse: NewUploadSignResponse,
+  onProgress: (progress: number) => void
+): Promise<CloudinaryUploadResult> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("api_key", signResponse.apiKey);
+    formData.append("timestamp", String(signResponse.timestamp));
+    formData.append("folder", signResponse.folder);
+    formData.append("signature", signResponse.signature);
+    formData.append("colors", "true");
+
+    const xhr = new XMLHttpRequest();
+    xhr.open(
+      "POST",
+      `https://api.cloudinary.com/v1_1/${signResponse.cloudName}/image/upload`
+    );
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      try {
+        const payload = JSON.parse(xhr.responseText) as Record<string, unknown>;
+
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(normalizeCloudinaryResult(payload));
+          return;
+        }
+
+        reject(new Error("上传失败，请稍后重试。"));
+      } catch {
+        reject(new Error("上传失败，请稍后重试。"));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("上传失败，请检查网络后重试。"));
+    };
+
+    xhr.send(formData);
+  });
+}
+
+async function persistAsset(
+  userId: string,
+  imageHash: string,
+  uploadResult: CloudinaryUploadResult,
+  signResponse: NewUploadSignResponse
+) {
+  const response = await fetch("/api/assets", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      userId,
+      imageHash,
+      uploadIntent: signResponse.uploadIntent,
+      timestamp: signResponse.timestamp,
+      publicId: uploadResult.publicId,
+      secureUrl: uploadResult.secureUrl,
+      width: uploadResult.width,
+      height: uploadResult.height,
+      bytes: uploadResult.bytes,
+      etag: uploadResult.etag,
+      format: uploadResult.format,
+      metadata: {
+        colors: uploadResult.colors,
+        cloudinary: {
+          etag: uploadResult.etag,
+          format: uploadResult.format
+        }
+      }
+    })
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.message ?? "图片信息保存失败，请重试。");
+  }
+
+  return payload;
+}
+
+export function PhotoUploader({ userId }: PhotoUploaderProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [anonymousUserId, setAnonymousUserId] = useState<string | null>(userId ?? null);
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageHash, setImageHash] = useState<string | null>(null);
+  const [status, setStatus] = useState<UploadState>("idle");
+  const [progress, setProgress] = useState(0);
+  const [message, setMessage] = useState("选择旅行照片");
+
+  const isBusy = status === "hashing"
+    || status === "signing"
+    || status === "uploading"
+    || status === "saving";
+
+  useEffect(() => {
+    if (userId) {
+      setAnonymousUserId(userId);
+      return;
+    }
+
+    const storageKey = "travelmemory.anonymousUserId";
+    const existingUserId = window.localStorage.getItem(storageKey);
+
+    if (existingUserId) {
+      setAnonymousUserId(existingUserId);
+      return;
+    }
+
+    const nextUserId = `anon_${crypto.randomUUID()}`;
+    window.localStorage.setItem(storageKey, nextUserId);
+    setAnonymousUserId(nextUserId);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
+
+  async function runUpload(nextFile: File, existingHash?: string) {
+    if (!anonymousUserId) {
+      setStatus("failed");
+      setMessage("上传准备中，请稍后再试。");
+      return;
+    }
+
+    try {
+      setStatus("hashing");
+      setProgress(0);
+      setMessage("正在计算图片身份…");
+
+      const nextHash = existingHash ?? await calculateImageHash(nextFile);
+      setImageHash(nextHash);
+
+      setStatus("signing");
+      setMessage("正在准备安全上传…");
+      const signResponse = await requestUploadSignature(anonymousUserId, nextFile, nextHash);
+
+      if (signResponse.reuse) {
+        setProgress(100);
+        setStatus("uploaded");
+        setMessage("这张照片已经准备好了。");
+        return;
+      }
+
+      if (isNewUploadResponse(signResponse)) {
+        setStatus("uploading");
+        setMessage("正在上传到云端相册…");
+        const uploadResult = await uploadToCloudinary(nextFile, signResponse, setProgress);
+
+        setStatus("saving");
+        setMessage("正在保存照片信息…");
+        await persistAsset(anonymousUserId, nextHash, uploadResult, signResponse);
+
+        setProgress(100);
+        setStatus("uploaded");
+        setMessage("照片已准备好，可以继续生成旅行记忆。");
+      }
+    } catch (error) {
+      const nextMessage = error instanceof Error ? error.message : "上传失败，请稍后重试。";
+      setStatus(nextMessage.includes("上传服务暂时不可用") ? "unavailable" : "failed");
+      setMessage(nextMessage);
+    }
+  }
+
+  function handleFile(nextFile: File | undefined) {
+    if (!nextFile) {
+      setStatus("failed");
+      setMessage("图片读取失败，请重新选择一张。");
+      return;
+    }
+
+    const policyResult = validateImageFilePolicy(nextFile);
+
+    if (!policyResult.ok) {
+      setFile(null);
+      setImageHash(null);
+      setProgress(0);
+      setStatus("failed");
+      setMessage(policyResult.message);
+      return;
+    }
+
+    setFile(nextFile);
+    setStatus("preview");
+    setProgress(0);
+    setMessage("本地预览已准备好，正在继续上传。");
+    void runUpload(nextFile);
+  }
+
+  function handleRetry() {
+    if (!file) {
+      inputRef.current?.click();
+      return;
+    }
+
+    void runUpload(file, imageHash ?? undefined);
+  }
+
+  return (
+    <section className="space-y-4">
+      <div
+        className="tm-panel p-4"
+        onDragOver={(event) => {
+          event.preventDefault();
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          handleFile(event.dataTransfer.files[0]);
+        }}
+      >
+        <label htmlFor="photo" className="tm-upload-zone">
+          <span className="text-base font-semibold text-tm-text">
+            {status === "idle" ? "选择旅行照片" : "重新选择旅行照片"}
+          </span>
+          <span className="mt-2 text-sm leading-6 text-tm-muted">
+            点击选择，或把照片拖到这里。默认使用第一张照片作为主图。
+          </span>
+        </label>
+        <input
+          ref={inputRef}
+          id="photo"
+          name="photo"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          className="sr-only"
+          onChange={(event) => {
+            handleFile(event.target.files?.[0]);
+          }}
+        />
+      </div>
+
+      <section className="tm-card p-4">
+        <div className="flex aspect-[9/16] w-full items-center justify-center overflow-hidden rounded-tm-card border border-tm-border bg-tm-surface-soft p-3 shadow-tm-soft">
+          {previewUrl ? (
+            <img
+              src={previewUrl}
+              alt="旅行照片预览"
+              className="max-h-full max-w-full rounded-tm-btn object-contain shadow-tm-soft"
+            />
+          ) : null}
+        </div>
+        <p className="mt-3 text-center text-sm text-tm-muted">
+          {previewUrl ? "本地预览已准备好" : "照片预览区域"}
+        </p>
+      </section>
+
+      {status !== "idle" ? (
+        <div className="tm-card space-y-3 p-4">
+          {isBusy || status === "uploaded" ? (
+            <UploadProgress
+              progress={progress}
+              label={
+                status === "hashing"
+                  ? "正在计算图片身份…"
+                  : status === "signing"
+                    ? "正在准备安全上传…"
+                    : status === "uploading"
+                      ? "正在上传到云端相册…"
+                      : status === "saving"
+                        ? "正在保存照片信息…"
+                        : "上传完成"
+              }
+            />
+          ) : null}
+          <p className="text-sm text-tm-muted">{message}</p>
+          {status === "preview" ? (
+            <p className="text-xs text-tm-muted">
+              你可以先确认照片构图，系统会继续完成云端上传。
+            </p>
+          ) : null}
+          {status === "unavailable" ? (
+            <p className="text-xs text-tm-muted">
+              本地预览可继续查看，但云端上传尚未完成。
+            </p>
+          ) : null}
+          {status === "failed" || status === "unavailable" ? (
+            <button
+              type="button"
+              className="tm-chip tm-chip-active w-full"
+              onClick={handleRetry}
+            >
+              重试上传
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+type UploadProgressProps = {
+  progress: number;
+  label: string;
+};
+
+export function UploadProgress({ progress, label }: UploadProgressProps) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-xs font-medium text-tm-muted">
+        <span>{label}</span>
+        <span>{progress}%</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-tm-pill bg-tm-surface-soft">
+        <div
+          className="h-full rounded-tm-pill bg-tm-primary"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+import { NextResponse } from "next/server";
+
+import { createUploadSignature } from "../../lib/services/upload-sign-service";
+
+export async function POST(request: Request) {
+  try {
+    const payload = await request.json();
+    const result = await createUploadSignature(payload);
+
+    if (!result.ok) {
+      return NextResponse.json(
+        { message: result.message },
+        { status: result.status }
+      );
+    }
+
+    return NextResponse.json(result.data);
+  } catch {
+    return NextResponse.json(
+      { message: "上传服务暂时不可用，请稍后再试。" },
+      { status: 500 }
+    );
+  }
+}
+import { NextResponse } from "next/server";
+
+import { persistUploadAsset } from "../../lib/services/asset-service";
+
+export async function POST(request: Request) {
+  try {
+    const payload = await request.json();
+    const result = await persistUploadAsset(payload);
+
+    if (!result.ok) {
+      return NextResponse.json(
+        { message: result.message },
+        { status: result.status }
+      );
+    }
+
+    return NextResponse.json({
+      assetId: result.asset.id,
+      asset: result.asset
+    });
+  } catch {
+    return NextResponse.json(
+      { message: "图片信息保存失败，请重试。" },
+      { status: 500 }
+    );
+  }
+}
+import { createHash } from "crypto";
+
+const inferenceTransform = "w_512,c_limit,q_auto,f_auto";
+
+export type UploadSignatureInput = {
+  folder: string;
+  timestamp: number;
+  colors?: true;
+};
+
+export function buildUploadFolder(userId: string): string {
+  return `travelmemory/${encodeURIComponent(userId)}/uploads`;
+}
+
+export function buildInferenceImageUrl512(publicId: string): string {
+  const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+    ?? process.env.CLOUDINARY_CLOUD_NAME;
+
+  if (!cloudName) {
+    return "";
+  }
+
+  return `https://res.cloudinary.com/${cloudName}/image/upload/${inferenceTransform}/${publicId}`;
+}
+
+export function getInferenceTransform(): string {
+  return inferenceTransform;
+}
+
+export function generateUploadSignature(input: UploadSignatureInput): string {
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+  if (!apiSecret) {
+    throw new Error("Missing CLOUDINARY_API_SECRET");
+  }
+
+  const params = {
+    colors: input.colors ? "true" : undefined,
+    folder: input.folder,
+    timestamp: String(input.timestamp)
+  };
+
+  const signaturePayload = Object.entries(params)
+    .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("&");
+
+  return createHash("sha1")
+    .update(`${signaturePayload}${apiSecret}`)
+    .digest("hex");
+}
+
+export function generateUploadIntent(input: {
+  userId: string;
+  imageHash: string;
+  folder: string;
+  timestamp: number;
+}): string {
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+  if (!apiSecret) {
+    throw new Error("Missing CLOUDINARY_API_SECRET");
+  }
+
+  return createHash("sha256")
+    .update(`${input.userId}:${input.imageHash}:${input.folder}:${input.timestamp}:${apiSecret}`)
+    .digest("hex");
+}
+
+export function verifyUploadIntent(input: {
+  userId: string;
+  imageHash: string;
+  publicId: string;
+  timestamp?: number;
+  uploadIntent: string;
+}): boolean {
+  const folder = buildUploadFolder(input.userId);
+
+  if (!input.publicId.startsWith(`${folder}/`)) {
+    return false;
+  }
+
+  if (!input.timestamp) {
+    return false;
+  }
+
+  const expectedIntent = generateUploadIntent({
+    userId: input.userId,
+    imageHash: input.imageHash,
+    folder,
+    timestamp: input.timestamp
+  });
+
+  return expectedIntent === input.uploadIntent;
+}
+import { z } from "zod";
+
+import type { UploadSignRequest, UploadSignResponse } from "../../types/upload";
+import {
+  buildUploadFolder,
+  generateUploadIntent,
+  generateUploadSignature
+} from "../cloudinary/utility";
+import { findUploadAssetByUserAndHash } from "../repositories/asset-repository";
+import { validateImageFilePolicy } from "../utils/file-policy";
+
+export type UploadSignServiceResult =
+  | {
+      ok: true;
+      data: UploadSignResponse;
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+    };
+
+const uploadSignRequestSchema = z.object({
+  userId: z.string().min(1).max(128),
+  imageHash: z.string().min(8).max(128),
+  fileName: z.string().min(1).max(255),
+  fileSize: z.number().int().positive(),
+  mimeType: z.string().min(1).max(100)
+});
+
+export async function createUploadSignature(
+  payload: unknown
+): Promise<UploadSignServiceResult> {
+  const parsed = uploadSignRequestSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: 400,
+      message: "图片读取失败，请重新选择一张。"
+    };
+  }
+
+  const input: UploadSignRequest = parsed.data;
+
+  const policyResult = validateImageFilePolicy({
+    size: input.fileSize,
+    type: input.mimeType
+  });
+
+  if (!policyResult.ok) {
+    return {
+      ok: false,
+      status: 400,
+      message: policyResult.message
+    };
+  }
+
+  const existingAsset = await findUploadAssetByUserAndHash(
+    input.userId,
+    input.imageHash
+  );
+
+  if (existingAsset) {
+    return {
+      ok: true,
+      data: {
+        reuse: true,
+        asset: {
+          id: existingAsset.id,
+          publicId: existingAsset.publicId,
+          secureUrl: existingAsset.secureUrl,
+          width: existingAsset.width,
+          height: existingAsset.height,
+          bytes: existingAsset.bytes,
+          etag: existingAsset.etag,
+          imageHash: existingAsset.imageHash
+        }
+      }
+    };
+  }
+
+  const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.NEXT_PUBLIC_CLOUDINARY_API_KEY;
+
+  if (!cloudName || !apiKey || !process.env.CLOUDINARY_API_SECRET) {
+    return {
+      ok: false,
+      status: 500,
+      message: "上传服务暂时不可用，请稍后再试。"
+    };
+  }
+
+  const folder = buildUploadFolder(input.userId);
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = generateUploadSignature({
+    folder,
+    timestamp,
+    colors: true
+  });
+  const uploadIntent = generateUploadIntent({
+    userId: input.userId,
+    imageHash: input.imageHash,
+    folder,
+    timestamp
+  });
+
+  return {
+    ok: true,
+    data: {
+      reuse: false,
+      cloudName,
+      apiKey,
+      timestamp,
+      folder,
+      signature,
+      uploadIntent,
+      colors: true
+    }
+  };
+}
+import { z } from "zod";
+
+import type { CreateAssetRequest, UploadAsset, UploadAssetMetadata } from "../../types/upload";
+import {
+  buildInferenceImageUrl512,
+  getInferenceTransform,
+  verifyUploadIntent
+} from "../cloudinary/utility";
+import { upsertUploadAsset } from "../repositories/asset-repository";
+
+export type AssetServiceResult =
+  | {
+      ok: true;
+      asset: UploadAsset;
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+    };
+
+const createAssetRequestSchema = z.object({
+  userId: z.string().min(1).max(128),
+  imageHash: z.string().min(8).max(128),
+  uploadIntent: z.string().length(64),
+  timestamp: z.number().int().positive().optional(),
+  publicId: z.string().min(1).max(512),
+  secureUrl: z.string().url(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+  bytes: z.number().int().positive(),
+  etag: z.string().max(255).optional(),
+  format: z.string().max(32).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+
+export async function persistUploadAsset(payload: unknown): Promise<AssetServiceResult> {
+  const parsed = createAssetRequestSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: 400,
+      message: "图片信息保存失败，请重试。"
+    };
+  }
+
+  const input = parsed.data satisfies CreateAssetRequest & { timestamp?: number };
+
+  if (!verifyUploadIntent(input)) {
+    return {
+      ok: false,
+      status: 403,
+      message: "图片信息校验失败，请重新上传。"
+    };
+  }
+
+  const incomingMetadata = (
+    input.metadata && typeof input.metadata === "object"
+      ? input.metadata
+      : {}
+  ) as Record<string, unknown>;
+
+  const metadata: UploadAssetMetadata = {
+    ...incomingMetadata,
+    colors: incomingMetadata.colors,
+    cloudinary: {
+      ...(typeof incomingMetadata.cloudinary === "object" && incomingMetadata.cloudinary
+        ? incomingMetadata.cloudinary
+        : {}),
+      etag: input.etag,
+      format: input.format
+    },
+    inference: {
+      url512: buildInferenceImageUrl512(input.publicId),
+      transform: getInferenceTransform()
+    }
+  };
+
+  const asset = await upsertUploadAsset(input, metadata);
+
+  return {
+    ok: true,
+    asset
+  };
+}
+import { and, eq } from "drizzle-orm";
+
+import { getDb } from "../db";
+import { uploadAssets } from "../db/schema";
+import type { CreateAssetRequest, UploadAsset, UploadAssetMetadata } from "../../types/upload";
+
+function mapAsset(row: typeof uploadAssets.$inferSelect): UploadAsset {
+  return {
+    id: row.id,
+    userId: row.userId,
+    imageHash: row.imageHash,
+    publicId: row.publicId,
+    secureUrl: row.secureUrl,
+    width: row.width,
+    height: row.height,
+    bytes: row.bytes,
+    etag: row.etag,
+    format: row.format,
+    metadata: row.metadata
+  };
+}
+
+export async function findUploadAssetByUserAndHash(
+  userId: string,
+  imageHash: string
+): Promise<UploadAsset | null> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(uploadAssets)
+    .where(and(eq(uploadAssets.userId, userId), eq(uploadAssets.imageHash, imageHash)))
+    .limit(1);
+
+  return rows[0] ? mapAsset(rows[0]) : null;
+}
+
+export async function upsertUploadAsset(
+  input: CreateAssetRequest,
+  metadata: UploadAssetMetadata
+): Promise<UploadAsset> {
+  const db = getDb();
+  const rows = await db
+    .insert(uploadAssets)
+    .values({
+      userId: input.userId,
+      imageHash: input.imageHash,
+      publicId: input.publicId,
+      secureUrl: input.secureUrl,
+      width: input.width,
+      height: input.height,
+      bytes: input.bytes,
+      etag: input.etag,
+      format: input.format,
+      metadata
+    })
+    .onConflictDoUpdate({
+      target: [uploadAssets.userId, uploadAssets.imageHash],
+      set: {
+        publicId: input.publicId,
+        secureUrl: input.secureUrl,
+        width: input.width,
+        height: input.height,
+        bytes: input.bytes,
+        etag: input.etag,
+        format: input.format,
+        metadata
+      }
+    })
+    .returning();
+
+  return mapAsset(rows[0]);
+}
+import type { FilePolicyInput } from "../../types/upload";
+
+export const allowedImageMimeTypes = [
+  "image/jpeg",
+  "image/png",
+  "image/webp"
+] as const;
+
+export const maxUploadFileSizeBytes = 8 * 1024 * 1024;
+
+export type FilePolicyResult =
+  | {
+      ok: true;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export function validateImageFilePolicy(input: FilePolicyInput): FilePolicyResult {
+  if (!input.size || input.size <= 0) {
+    return {
+      ok: false,
+      message: "图片读取失败，请重新选择一张。"
+    };
+  }
+
+  if (!allowedImageMimeTypes.includes(input.type as (typeof allowedImageMimeTypes)[number])) {
+    return {
+      ok: false,
+      message: "暂不支持这个格式，请上传 JPG、PNG 或 WebP。"
+    };
+  }
+
+  if (input.size > maxUploadFileSizeBytes) {
+    return {
+      ok: false,
+      message: "这张照片太大了，请上传 8MB 以内的图片。"
+    };
+  }
+
+  return { ok: true };
+}
+"use client";
+
+import SparkMD5 from "spark-md5";
+
+const chunkSize = 2 * 1024 * 1024;
+
+export async function calculateImageHash(file: File): Promise<string> {
+  const spark = new SparkMD5.ArrayBuffer();
+  let offset = 0;
+
+  while (offset < file.size) {
+    const chunk = file.slice(offset, offset + chunkSize);
+    const buffer = await chunk.arrayBuffer();
+    spark.append(buffer);
+    offset += chunkSize;
+  }
+
+  return spark.end();
+}
+import {
+  pgTable,
+  bigserial,
+  bigint,
+  text,
+  integer,
+  timestamp,
+  jsonb,
+  uniqueIndex,
+  index
+} from "drizzle-orm/pg-core";
+
+import type { UploadAssetMetadata } from "../../types/upload";
+
+export const users = pgTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    nickname: text("nickname"),
+    avatarUrl: text("avatar_url"),
+    inviterId: text("inviter_id"),
+    sourceScene: text("source_scene"),
+    credits: integer("credits").notNull().default(5),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date())
+  },
+  (table) => ({
+    inviterIdx: index("users_inviter_idx").on(table.inviterId),
+    createdAtIdx: index("users_created_at_idx").on(table.createdAt)
+  })
+);
+
+export const memories = pgTable(
+  "memories",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    city: text("city"),
+    locationText: text("location_text"),
+    mood: text("mood"),
+    travelDate: text("travel_date"),
+
+    title: text("title"),
+    caption: text("caption"),
+    xhsCaption: text("xhs_caption"),
+    templateKey: text("template_key"),
+
+    shareCardUrl: text("share_card_url"),
+    miniQrPublicId: text("mini_qr_public_id"),
+
+    model: text("model").notNull().default("gpt-4o-mini"),
+    promptVersion: text("prompt_version").notNull().default("v1"),
+    tokenCostLevel: text("token_cost_level").notNull().default("low_512"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date())
+  },
+  (table) => ({
+    userIdx: index("memories_user_idx").on(table.userId),
+    createdAtIdx: index("memories_created_at_idx").on(table.createdAt)
+  })
+);
+
+export const uploadAssets = pgTable(
+  "upload_assets",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: text("user_id").notNull(),
+    imageHash: text("image_hash").notNull(),
+    publicId: text("public_id").notNull(),
+    secureUrl: text("secure_url").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    bytes: integer("bytes").notNull(),
+    etag: text("etag"),
+    format: text("format"),
+    metadata: jsonb("metadata").$type<UploadAssetMetadata>().notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+  },
+  (table) => ({
+    userImageHashIdx: uniqueIndex("upload_assets_user_image_hash_idx").on(
+      table.userId,
+      table.imageHash
+    ),
+    userIdx: index("upload_assets_user_idx").on(table.userId),
+    imageHashIdx: index("upload_assets_image_hash_idx").on(table.imageHash),
+    createdAtIdx: index("upload_assets_created_at_idx").on(table.createdAt)
+  })
+);
+
+export const aiJobs = pgTable(
+  "ai_jobs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    status: text("status").notNull().default("PENDING"),
+
+    payload: jsonb("payload").notNull(),
+    result: jsonb("result"),
+    error: text("error"),
+
+    retryCount: integer("retry_count").notNull().default(0),
+    jobKey: text("job_key").notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date())
+  },
+  (table) => ({
+    userIdx: index("ai_jobs_user_idx").on(table.userId),
+    statusIdx: index("ai_jobs_status_idx").on(table.status),
+    createdAtIdx: index("ai_jobs_created_at_idx").on(table.createdAt),
+    jobKeyIdx: uniqueIndex("ai_jobs_job_key_idx").on(table.jobKey)
+  })
+);
+
+export const shareCards = pgTable(
+  "share_cards",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+
+    memoryId: bigint("memory_id", { mode: "number" })
+      .notNull()
+      .references(() => memories.id, { onDelete: "cascade" }),
+
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    inviterId: text("inviter_id"),
+    scene: text("scene").notNull(),
+
+    posterUrl: text("poster_url").notNull(),
+    qrPublicId: text("qr_public_id").notNull(),
+
+    templateKey: text("template_key"),
+    variant: text("variant").notNull().default("A"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date())
+  },
+  (table) => ({
+    memoryIdx: index("share_cards_memory_idx").on(table.memoryId),
+    userIdx: index("share_cards_user_idx").on(table.userId),
+    sceneIdx: index("share_cards_scene_idx").on(table.scene),
+    createdAtIdx: index("share_cards_created_at_idx").on(table.createdAt)
+  })
+);
+
+export const growthEvents = pgTable(
+  "growth_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+
+    userId: text("user_id"),
+
+    memoryId: bigint("memory_id", { mode: "number" }).references(
+      () => memories.id,
+      { onDelete: "set null" }
+    ),
+
+    shareCardId: bigint("share_card_id", { mode: "number" }).references(
+      () => shareCards.id,
+      { onDelete: "set null" }
+    ),
+
+    inviterId: text("inviter_id"),
+
+    jobId: bigint("job_id", { mode: "number" }).references(
+      () => aiJobs.id,
+      { onDelete: "set null" }
+    ),
+
+    eventName: text("event_name").notNull(),
+    variant: text("variant"),
+    durationMs: integer("duration_ms"),
+    meta: jsonb("meta"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date())
+  },
+  (table) => ({
+    eventNameIdx: index("growth_events_event_name_idx").on(table.eventName),
+    userIdx: index("growth_events_user_idx").on(table.userId),
+    memoryIdx: index("growth_events_memory_idx").on(table.memoryId),
+    shareCardIdx: index("growth_events_share_card_idx").on(table.shareCardId),
+    inviterIdx: index("growth_events_inviter_idx").on(table.inviterId),
+    jobIdx: index("growth_events_job_idx").on(table.jobId),
+    createdAtIdx: index("growth_events_created_at_idx").on(table.createdAt)
+  })
+);
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
+
+import * as schema from "./schema";
+
+export function getDb() {
+  const databaseUrl = process.env.DATABASE_URL;
+
+  if (!databaseUrl) {
+    throw new Error("Missing DATABASE_URL");
+  }
+
+  const sql = neon(databaseUrl);
+
+  return drizzle(sql, { schema });
+}
+export type FilePolicyInput = {
+  size: number;
+  type: string;
+};
+
+export type UploadSignRequest = {
+  userId: string;
+  imageHash: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+};
+
+export type UploadAssetMetadata = {
+  inference: {
+    url512: string;
+    transform: string;
+  };
+  colors?: unknown;
+  cloudinary?: {
+    etag?: string;
+    format?: string;
+  };
+};
+
+export type UploadAsset = {
+  id: number;
+  userId: string;
+  imageHash: string;
+  publicId: string;
+  secureUrl: string;
+  width: number;
+  height: number;
+  bytes: number;
+  etag: string | null;
+  format: string | null;
+  metadata: UploadAssetMetadata;
+};
+
+export type ReusableUploadSignResponse = {
+  reuse: true;
+  asset: {
+    id: number;
+    publicId: string;
+    secureUrl: string;
+    width: number;
+    height: number;
+    bytes: number;
+    etag: string | null;
+    imageHash: string;
+  };
+};
+
+export type NewUploadSignResponse = {
+  reuse: false;
+  cloudName: string;
+  apiKey: string;
+  timestamp: number;
+  folder: string;
+  signature: string;
+  uploadIntent: string;
+  colors: true;
+};
+
+export type UploadSignResponse =
+  | ReusableUploadSignResponse
+  | NewUploadSignResponse;
+
+export type CloudinaryUploadResult = {
+  publicId: string;
+  secureUrl: string;
+  width: number;
+  height: number;
+  bytes: number;
+  etag?: string;
+  format?: string;
+  colors?: unknown;
+};
+
+export type CreateAssetRequest = {
+  userId: string;
+  imageHash: string;
+  uploadIntent: string;
+  publicId: string;
+  secureUrl: string;
+  width: number;
+  height: number;
+  bytes: number;
+  etag?: string;
+  format?: string;
+  metadata?: Record<string, unknown>;
+};
+export * from "../app/lib/db/schema";
+CREATE TABLE IF NOT EXISTS "upload_assets" (
+  "id" bigserial PRIMARY KEY NOT NULL,
+  "user_id" text NOT NULL,
+  "image_hash" text NOT NULL,
+  "public_id" text NOT NULL,
+  "secure_url" text NOT NULL,
+  "width" integer NOT NULL,
+  "height" integer NOT NULL,
+  "bytes" integer NOT NULL,
+  "etag" text,
+  "format" text,
+  "metadata" jsonb NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "upload_assets_user_image_hash_idx"
+  ON "upload_assets" ("user_id", "image_hash");
+
+CREATE INDEX IF NOT EXISTS "upload_assets_user_idx"
+  ON "upload_assets" ("user_id");
+
+CREATE INDEX IF NOT EXISTS "upload_assets_image_hash_idx"
+  ON "upload_assets" ("image_hash");
+
+CREATE INDEX IF NOT EXISTS "upload_assets_created_at_idx"
+  ON "upload_assets" ("created_at");
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/DATABASE?sslmode=require"
+
+CLOUDINARY_API_SECRET="your-cloudinary-api-secret"
+CLOUDINARY_API_KEY="your-cloudinary-api-key"
+CLOUDINARY_CLOUD_NAME="your-cloudinary-cloud-name"
+
+NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME="your-cloudinary-cloud-name"
+NEXT_PUBLIC_CLOUDINARY_API_KEY="your-cloudinary-api-key"
+{
+  "name": "travelmemory-ai-agent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "drizzle-orm": "^0.45.2",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "spark-md5": "^3.0.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/spark-md5": "^3.0.5",
+    "autoprefixer": "^10.5.0",
+    "drizzle-kit": "^0.31.10",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^5.0.0"
+  }
+}
